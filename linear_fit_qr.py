@@ -43,16 +43,16 @@ class LinearFitResult( object ):
 def linear_fit_qr( xdata, ydata, funclist, w=None ):
     """
     Linear fit procedure using qr decomposition. Calculates the best
-    linear combination of the function, evaluated on xdata, to approximate
-    ydata. Minimizes the weightes least sqare.Weights may be specified.
-    Uses the fact that (S x - y ).T W (S x - y ) can be decomposed
-    into (S x - y ).T F.T F (S x - y ) and therefore be remapped
-    to the unweighted problem ( F S x - F y ) = (A x - z)
-    Eventually, it is tested against scipy.optimize.curve_fit. The point
-    is to show that there is no magic in linear fits even with a given
-    covariance- or precision matrix. It is really straight forward and can be done
-    with simple tools from linear algebra and one or two little tweaks
-    to avoid numerical instability.
+    linear combination of the function, evaluated on xdata, to
+    approximate ydata. Minimizes the weightes least sqare.Weights may
+    be specified. Uses the fact that ( S x - y ).T W ( S x - y ) can
+    be decomposed into ( S x - y ).T F.T F ( S x - y ) and therefore
+    be remapped to the unweighted problem ( F S x - F y ) = ( A x - z )
+    Eventually, it is tested against scipy.optimize.curve_fit. The
+    point is to show that there is no magic in linear fits even with a
+    given covariance- or precision matrix. It is really straight
+    forward and can be done with simple tools from linear algebra and
+    one or two little tweaks to avoid numerical instability.
 
     :param xdata: 
     :type xdata: list, tuple or ndarray of int or float (maybe complex)
@@ -69,12 +69,14 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
     :rtype: LinearFitResult
 
     :raises TypeError: if xdata or ydata are not iterables of type int or float
-    :raises ValueError: if xdata and ydata have diffeerent length
-    :raises ValueError: if length of ydata is less or equal than length of funclist
-    :raises ValueError: if w is not list, tuple or array of positive int or float
-    :raises ValueError: if w is not positive definite matrix of int or float
+    :raises TypeError: if xdata or ydata are not iterables
+    :raises TypeError: if w is not list, tuple or array of int or float
     :raises TypeError: if w is not of shape (m,) or (m,m), where m is the length of ydata
     :raises TypeError: if w is a matrix of shape (m,m), but not symmetric
+    :raises ValueError: if length of ydata is less or equal than length of funclist
+    :raises ValueError: if xdata and ydata have diffeerent length
+    :raises ValueError: if w is a matrix of shape (m,m), but not positive definite."
+    :raises ValueError: if w is an iterable of shape (m,)with entries less or equal zero"
     """
     n = len( funclist )
     m = len( xdata )
@@ -85,6 +87,10 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
     ###################
 
     ### proper data types
+    if not isinstance( xdata, ( tuple, list, np.ndarray ) ):
+        raise TypeError ( "xdata must be 1D iterable" )
+    if not isinstance( ydata, ( tuple, list, np.ndarray ) ):
+        raise TypeError ( "ydata must be 1D iterable" )
     if not np.fromiter(
                 (
                     isinstance( x, (int, float) ) for x in xdata
@@ -100,7 +106,7 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
 
     ### proper data length
     if m != len( ydata ):
-        raise ValueError ( "x- and y-data  of unequal length." )
+        raise ValueError ( "x- and y-data of unequal length." )
     if m <= n:
         raise ValueError ( "Exact or under determined problem." )
         ###m = n could be solved, but one cannot estimate an s^2
@@ -110,8 +116,8 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
         fmx = np.identity( m )
     else:
         fmx2 = np.asarray( w )
-        if fmx2.shape == ( m, ):                            ## is vector
-            ### propertype of elements in w
+        if fmx2.shape == ( m, ):                                ## is vector
+            ### proper type of elements in w
             if (
                 np.fromiter(
                     (isinstance( elem, (int, float) ) for elem in fmx2),
@@ -135,11 +141,13 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
                     isinstance( elem, (int, float) ) for elem in np.concatenate( fmx2 ) 
                 ), bool
             ).all():
+                ### symmetry
                 if not np.allclose( fmx2, np.transpose( fmx2 ) ):
                     raise TypeError ("covariance matrix is not symmetric.")
                 evals, evecs = np.linalg.eig( fmx2 )
+                ### positive definite
                 if not np.fromiter(
-                    ( elem > 0 for elem in evals),           ## must be positive definite
+                    ( elem > 0 for elem in evals),
                     bool
                 ).all():
                     raise ValueError (" wighting matrix is not positive definite")
@@ -147,7 +155,7 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
                 ### and O = evacsT
                 ### then fmx = do.T do
                 ###with
-                c = np.diag( np.sqrt( evals ) )             ## c.T c = d
+                c = np.diag( np.sqrt( evals ) )                 ## c.T c = d
                 o = np.transpose( evecs )
                 fmx = np.dot( c, o )
             else:
@@ -161,20 +169,32 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
     ###################
     lfr = LinearFitResult()
     lfr._degreesoffreedom = m - n
-    ST = np.array( [ f( xdata ) for f in funclist ] )       ## only used to calc S
-    S = np.transpose( ST )
-    S = np.dot( fmx, S )                                    ## re-map due to weighting
-    yf = np.dot( fmx, ydata )                                ## re-map due to weighting
-    q, r = qr( S )                                          ## decomposition
-    rred = r[ : n ]                                         ## making it square...skip the zeros
+    ST = np.array( [ f( xdata ) for f in funclist ] )           ## only used to calc S
+    S0 = np.transpose( ST )
+    S = np.dot( fmx, S0 )                                        ## re-map due to weighting
+    yf = np.dot( fmx, ydata )                                   ## re-map due to weighting
+    q, r = qr( S )                                              ## decomposition
+    rred = r[ : n ]                                             ## making it square...skip the zeros
     yred = np.dot( np.transpose( q ), yf )[ : n ]
+    ### note the part np.dot(...)[ n:] corresponds to the
+    ### orthoganal transformed weighted residuals, i.e. without weigthing
+    ### its norm is equal to the norm of the residuals
     lfr._bestfitparameters = solve_triangular( rred, yred )
-    lfr._functionvalues = np.dot( S, lfr.bestfitparameters() ) ## by definition
+    lfr._functionvalues = np.dot( S0, lfr.bestfitparameters() )  ## by definition
     lfr._residuals = ydata - lfr.functionvalues()
     ### the following s2 fails if n>=m
     s2 = np.dot( lfr.residuals(), lfr.residuals() ) / lfr.degreesoffreedom()
     lfr._errorestimate = np.sqrt( s2 )
     lfr._precision = np.dot( np.transpose( r ), r )
+    ### for some testeting
+    # ~if True:
+        # ~epsilonred = np.dot( np.transpose( q ), yf )[ n : ]
+        # ~myw = np.dot(np.transpose(fmx), fmx )
+        # ~np.set_printoptions( linewidth=250 )
+        # ~print( "ered: ", np.dot( epsilonred, epsilonred ) )
+        # ~print( "w: ", myw )
+        # ~print( "ewe: ",np.dot( lfr.residuals(), np.dot( myw, lfr.residuals()) ) )
+        ### so lower part yred is equal to eps.T W eps.as expected
     ####################
     ### So W = R.T R => if s are the singular values (note, not the eigenvalues)
     ### of R then W has eigenvalues s^2. So if all singular values 
