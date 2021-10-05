@@ -1,43 +1,20 @@
 import numpy as np
 from scipy.linalg import qr
+from scipy.linalg import svd
 from scipy.linalg import solve_triangular
 from warnings import warn
 
-class LinearFitResult( object ):
-    """
-    Simple container class to hold fit results.
-    Provides a few self explaining getter functions.
-    """
 
-    def __init__( self ):
-        self._covariance = None
-        self._errorestimate = None
-        self._bestfitparameters = None
-        self._residuals = None
-        self._functionvalues = None
-        self._degreesoffreedom = None
-        self._precision = None
+"""
+Note, in therory this might work with complex data, but then
+most of the transpose operations on matrices would also requite a
+complex conjugate
+"""
 
-    def errorestimate( self ):
-        return self._errorestimate
-
-    def bestfitparameters( self ):
-        return self._bestfitparameters
-
-    def residuals( self ):
-        return self._residuals
-
-    def functionvalues( self ):
-        return self._functionvalues
-
-    def degreesoffreedom( self ):
-        return self._degreesoffreedom
-
-    def precision( self ):
-        return self._precision
-
-    def covariance( self ):
-        return self._covariance
+from LinearFitResult import LinearFitResult
+from checkinput import _check_weighting
+from checkinput import _check_data
+from checkinput import _check_functions
 
 
 def linear_fit_qr( xdata, ydata, funclist, w=None ):
@@ -55,9 +32,9 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
     one or two little tweaks to avoid numerical instability.
 
     :param xdata: 
-    :type xdata: list, tuple or ndarray of int or float (maybe complex)
+    :type xdata: list, tuple or ndarray of int or float
     :param ydata: 
-    type ydata: list, tuple or ndarray of int or float (maybe complex)
+    type ydata: list, tuple or ndarray of int or float
     @param funclist: list, tuple or ndarray of single valued callables
 
     Keyword args:
@@ -70,131 +47,47 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
 
     :raises TypeError: if xdata or ydata are not iterables of type int or float
     :raises TypeError: if xdata or ydata are not iterables
-    :raises TypeError: if w is not list, tuple or array of int or float
-    :raises TypeError: if w is not of shape (m,) or (m,m), where m is the length of ydata
-    :raises TypeError: if w is a matrix of shape (m,m), but not symmetric
-    :raises ValueError: if length of ydata is less or equal than length of funclist
-    :raises ValueError: if xdata and ydata have diffeerent length
-    :raises ValueError: if w is a matrix of shape (m,m), but not positive definite."
-    :raises ValueError: if w is an iterable of shape (m,)with entries less or equal zero"
+
     """
-    n = len( funclist )
-    m = len( xdata )
-    ###################
-    ### the following block
-    ### only checks for 
-    ### correct input
-    ###################
-
-    ### proper data types
-    if not isinstance( xdata, ( tuple, list, np.ndarray ) ):
-        raise TypeError ( "xdata must be 1D iterable" )
-    if not isinstance( ydata, ( tuple, list, np.ndarray ) ):
-        raise TypeError ( "ydata must be 1D iterable" )
-    if not np.fromiter(
-                (
-                    isinstance( x, (int, float) ) for x in xdata
-                ), bool
-    ).all():
-        raise TypeError ( "xdata is neither int nor float" )
-    if not np.fromiter(
-                (
-                    isinstance( x, (int, float) ) for x in ydata
-                ), bool
-    ).all():
-        raise TypeError ( "ydata is neither int nor float" )
-
-    ### proper data length
-    if m != len( ydata ):
-        raise ValueError ( "x- and y-data of unequal length." )
-    if m <= n:
-        raise ValueError ( "Exact or under determined problem." )
-        ###m = n could be solved, but one cannot estimate an s^2
+    n = _check_functions( funclist )
+    m = _check_data( n, xdata, ydata )
 
     ###  weighting
-    if w is None:
-        fmx = np.identity( m )
-    else:
-        fmx2 = np.asarray( w )
-        if fmx2.shape == ( m, ):                                ## is vector
-            ### proper type of elements in w
-            if (
-                np.fromiter(
-                    (isinstance( elem, (int, float) ) for elem in fmx2),
-                    bool
-                ).all()
-            ):
-                ### must be positive definite
-                if np.fromiter(
-                    ( elem > 0 for elem in fmx2 ),
-                    bool
-                ).all():
-                    fmx = np.diag( np.sqrt( fmx2 ) )
-                else:
-                    raise ValueError ("Weighting is not a list of positive int or float")
-                    
-            else:
-                raise TypeError ("Weighting is not of type int or float")
-        elif fmx2.shape == ( m, m ):
-            if np.fromiter(
-                (
-                    isinstance( elem, (int, float) ) for elem in np.concatenate( fmx2 ) 
-                ), bool
-            ).all():
-                ### symmetry
-                if not np.allclose( fmx2, np.transpose( fmx2 ) ):
-                    raise TypeError ("covariance matrix is not symmetric.")
-                evals, evecs = np.linalg.eig( fmx2 )
-                ### positive definite
-                if not np.fromiter(
-                    ( elem > 0 for elem in evals),
-                    bool
-                ).all():
-                    raise ValueError (" wighting matrix is not positive definite")
-                ### here D = diag evals
-                ### and O = evacsT
-                ### then fmx = do.T do
-                ###with
-                c = np.diag( np.sqrt( evals ) )                 ## c.T c = d
-                o = np.transpose( evecs )
-                fmx = np.dot( c, o )
-            else:
-                raise TypeError ("Weighting is not a matrix of int or float")
-        else:
-            raise TypeError (
-                "w is neither of shape ({m},) nor ({m},{m})".format( m=m )
-            )
+    fmx = _check_weighting( m, w=w )
     ###################
     ### calc best fit
     ###################
     lfr = LinearFitResult()
     lfr._degreesoffreedom = m - n
     ST = np.array( [ f( xdata ) for f in funclist ] )           ## only used to calc S
-    S0 = np.transpose( ST )
-    S = np.dot( fmx, S0 )                                        ## re-map due to weighting
-    yf = np.dot( fmx, ydata )                                   ## re-map due to weighting
-    q, r = qr( S )                                              ## decomposition
+    S = np.transpose( ST )
+    FS = np.dot( fmx, S )                                        ## re-map due to weighting
+    fy = np.dot( fmx, ydata )                                   ## re-map due to weighting
+    q, r = qr( FS )                                              ## decomposition
     rred = r[ : n ]                                             ## making it square...skip the zeros
-    yred = np.dot( np.transpose( q ), yf )[ : n ]
+    qfy = np.dot( np.transpose( q ), fy )
+    qfyred = qfy[ : n ]
+    epsilonred = qfy[ n : ]
     ### note the part np.dot(...)[ n:] corresponds to the
     ### orthoganal transformed weighted residuals, i.e. without weigthing
     ### its norm is equal to the norm of the residuals
-    lfr._bestfitparameters = solve_triangular( rred, yred )
-    lfr._functionvalues = np.dot( S0, lfr.bestfitparameters() )  ## by definition
-    lfr._residuals = ydata - lfr.functionvalues()
+    lfr._bestfitparameters = solve_triangular( rred, qfyred )
+    lfr._functionvalues = np.dot( S, lfr.best_fit_parameters() )  ## by definition
+    lfr._residuals = ydata - lfr.function_values()
     ### the following s2 fails if n>=m
-    s2 = np.dot( lfr.residuals(), lfr.residuals() ) / lfr.degreesoffreedom()
-    lfr._errorestimate = np.sqrt( s2 )
+    lfr._totalerror = np.sqrt(
+        np.dot(
+            lfr.residuals(),
+            lfr.residuals()
+        ) / lfr.degrees_of_freedom()
+    )
+    lfr._totalweightederror = np.sqrt(
+        np.dot(
+            epsilonred,
+            epsilonred
+        )
+    )
     lfr._precision = np.dot( np.transpose( r ), r )
-    ### for some testeting
-    # ~if True:
-        # ~epsilonred = np.dot( np.transpose( q ), yf )[ n : ]
-        # ~myw = np.dot(np.transpose(fmx), fmx )
-        # ~np.set_printoptions( linewidth=250 )
-        # ~print( "ered: ", np.dot( epsilonred, epsilonred ) )
-        # ~print( "w: ", myw )
-        # ~print( "ewe: ",np.dot( lfr.residuals(), np.dot( myw, lfr.residuals()) ) )
-        ### so lower part yred is equal to eps.T W eps.as expected
     ####################
     ### So W = R.T R => if s are the singular values (note, not the eigenvalues)
     ### of R then W has eigenvalues s^2. So if all singular values 
@@ -204,7 +97,7 @@ def linear_fit_qr( xdata, ydata, funclist, w=None ):
     try:
         lfr._covariance =  np.linalg.inv( lfr.precision() )
         if w is None:
-            lfr._covariance *= s2
+            lfr._covariance *= lfr.total_error()**2
     except np.linalg.LinAlgError as msg:
         warn( 
             "coavriance matrix could not be calculated due to {}".format( msg ),
